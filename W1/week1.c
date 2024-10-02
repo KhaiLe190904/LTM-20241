@@ -390,7 +390,12 @@ int main(){
         printf("6. View login history\n");
         printf("7. Sign out\n");
         printf("Your choice (1-7, other to quit):\n");
-        scanf("%d", &choice);
+        if (scanf("%d", &choice) != 1) { // Nếu nhập không phải số nguyên
+            // Xử lý buffer khi nhập ký tự không hợp lệ
+            while (getchar() != '\n');  // Xóa bộ đệm, chờ tới khi gặp '\n'
+            printf("Exiting...\n");
+            break;  // thoát
+        }
         switch(choice)
         {
         case 1:
@@ -419,7 +424,11 @@ int main(){
             logout();
             break;
         default:
-            printf("Exiting........");
+            printf("Exiting...\n");
         }
+        // Chờ người dùng nhấn Enter để tiếp tục
+        printf("Press Enter to continue...");
+        while (getchar() != '\n');  // Xóa bộ đệm
+        getchar();  // Chờ người dùng nhấn Enter
     } while(choice >= 1 && choice < 8);
 }
