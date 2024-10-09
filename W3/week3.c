@@ -4,15 +4,16 @@
 #include <time.h>
 #include <ctype.h>
 #include <string.h>
-#define account "account.txt"
+#include <arpa/inet.h>
+#include <netdb.h>
+#define account "nguoidung.txt"
 #define history "history.txt"
 
 typedef struct User{
     char username[50];
     char password[50];
-    char email[50];
-    char phone[11];
     int status;
+    char ip_or_domain[100];
     struct User* next;
 } User;
 
@@ -22,7 +23,7 @@ int isLog = 0;
 void readUserFromAccountFile(){
     FILE *file = fopen(account, "r");
     if(file == NULL){
-        printf("File account.txt doesn't exist!!!\n");
+        printf("File nguoidung.txt doesn't exist!!!\n");
         exit(1);
     }
 
@@ -36,12 +37,11 @@ void readUserFromAccountFile(){
         }
 
         // Đọc thông tin từ dòng và gán vào struct User
-        sscanf(line, "%s %s %s %s %d",
+        sscanf(line, "%s %s %d %s",
             newUser->username,
             newUser->password,
-            newUser->email,
-            newUser->phone,
-            &newUser->status);
+            &newUser->status,
+            newUser->ip_or_domain);
 
         // Thêm user mới vào danh sách liên kết
         newUser->next = head;
@@ -58,79 +58,73 @@ void saveUsertoFile(){
     }
     User *current = head;
     while(current != NULL){
-        fprintf(file, "%s %s %s %s %d\n",
+        fprintf(file, "%s %s %d %s\n",
         current->username,
         current->password,
-        current->email,
-        current->phone,
-        current->status);
+        current->status,
+        current->ip_or_domain);
         current = current->next;
     }
     fclose(file);
 }
 
-int checkNumberPhone(char phone[]){
-    if (strlen(phone) != 10) {
-        return 0;
-    }
-    for(int i=0; i < strlen(phone); i++){
-        if(!(phone[i] >= 48 && phone[i] <= 57)){ // SDT phải là số từ 0-9
-            return 0;
-        }
-    }
-    return 1;
+
+// Hàm kiểm tra địa chỉ ip hợp lệ
+int is_valid_ip(const char *ip_in) {
+    struct sockaddr_in sa;
+    int result = inet_pton(AF_INET, ip_in, &(sa.sin_addr));
+    return result != 0;
 }
 
-int checkEmail(char email[]) {
-    int atCount = 0;   // Đếm số lượng ký tự '@'
-    int dotCount = 0;  // Đếm số lượng dấu '.'
-    int len = strlen(email);
 
-    // Kiểm tra email không bắt đầu hoặc kết thúc bằng dấu '.' hoặc '@'
-    if (email[0] == '.' || email[0] == '@' || email[len - 1] == '.' || email[len - 1] == '@') {
-        return 0;
+// Tra cứu tên miền từ địa chỉ IP
+void lookup_ip_to_domain(char *ip) {
+    struct hostent *host;
+    struct in_addr **addr_list;
+    
+    unsigned long ip_in_addr = inet_addr(ip);
+    host = gethostbyaddr((const void *)&ip_in_addr, sizeof(ip_in_addr), AF_INET);
+    
+    if (host == NULL) {
+        printf("No information Domain found\n");
+        return;
     }
-
-    for (int i = 0; i < len; i++) {
-        char c = email[i];
-
-        // Kiểm tra ký tự hợp lệ (chữ cái, số, dấu chấm, dấu gạch dưới, dấu gạch ngang, hoặc @)
-        if (!(isalnum(c) || c == '.' || c == '_' || c == '-' || c == '@')) {
-            return 0;  // Ký tự không hợp lệ
+    
+    printf("Main name: %s\n", host->h_name);
+    
+    addr_list = (struct in_addr **) host->h_addr_list;
+    if (addr_list[1] != NULL) {
+        printf("Alternate names: ");
+        for (int i = 1; addr_list[i] != NULL; i++) {
+            printf("%s ", inet_ntoa(*addr_list[i]));
         }
-
-        // Đếm số lượng '@'
-        if (c == '@') {
-            atCount++;
-            if (atCount > 1) {
-                return 0;
-            }
-        }
-
-        // Đếm số lượng dấu '.'
-        if (c == '.') {
-            dotCount++;
-            // Kiểm tra không có dấu '.' liên tiếp
-            if (i > 0 && email[i - 1] == '.') {
-                return 0;  // Dấu '.' không được liên tiếp
-            }
-        }
+        printf("\n");
+    } else {
+        printf("Alternate names: \n");
     }
-
-    // Kiểm tra có ít nhất một '@' và một '.' sau '@' và không chứa các kí tự đặc biệt khác
-    char *atPtr = strchr(email, '@');
-    if (atPtr == NULL || strchr(atPtr, '.') == NULL || strchr(atPtr, '+') != NULL || strchr(atPtr, '-') != NULL || strchr(atPtr, '(') != NULL || strchr(atPtr, ')') != NULL || strchr(atPtr, '*') != NULL || strchr(atPtr, '/') != NULL) {
-        return 0;
-    }
-
-    // Kiểm tra nếu có ít nhất một ký tự hợp lệ giữa '@' và '.'
-    char *dotPtr = strchr(atPtr, '.');
-    if (dotPtr - atPtr < 2) {
-        return 0;  // Không hợp lệ nếu không có ký tự nào giữa '@' và '.'
-    }
-
-    return 1;  // Email hợp lệ
 }
+
+// Tra cứu địa chỉ IP từ tên miền
+void lookup_domain_to_ip(char *domain) {
+    struct hostent *host;
+    struct in_addr **addr_list;
+    
+    host = gethostbyname(domain);
+    
+    addr_list = (struct in_addr **) host->h_addr_list;
+    printf("Main IP: %s\n", inet_ntoa(*addr_list[0]));
+    
+    if (addr_list[1] != NULL) {
+        printf("Alternate IPs: ");
+        for (int i = 1; addr_list[i] != NULL; i++) {
+            printf("%s ", inet_ntoa(*addr_list[i]));
+        }
+        printf("\n");
+    } else {
+        printf("Alternate IPs: \n");
+    }
+}
+
 
 void saveLoginHistory(char username[]) {
     FILE *file = fopen(history, "a");
@@ -149,43 +143,40 @@ void saveLoginHistory(char username[]) {
 
     fclose(file);  // Đóng file sau khi ghi
 }
-
-void signupUser(){
-    User *newUser = (User*)malloc(sizeof(User));
-    printf("Username: "); scanf("%s", newUser->username);
-    printf("Password: "); scanf("%s", newUser->password);
-    do{
-        printf("Email: "); scanf("%s", newUser->email);
-        if(checkEmail(newUser->email) == 0){
-            printf("Re-Enter!!! Email khong dung format\n");
+    void signupUser(){
+        User *newUser = (User*)malloc(sizeof(User));
+        struct hostent *host;
+        struct in_addr **addr_list;
+        printf("Username: "); scanf("%s", newUser->username);
+        printf("Password: "); scanf("%s", newUser->password);
+        do{
+            printf("Ip or Domain: "); scanf("%s", newUser->ip_or_domain);
+            if (is_valid_ip(newUser->ip_or_domain)) { // Check if it's a valid IP
+                printf("This is a valid IP\n");
+            } else {
+                host = gethostbyname(newUser->ip_or_domain); // Check if it's a valid domain
+                if (host == NULL) {
+                    printf("No information Domain found\n");
+                } else {
+                printf("This is a valid Domain\n");
+                }
+            }
+        } while(is_valid_ip(newUser->ip_or_domain) == 0 && host == NULL);
+        newUser->status = 1;
+        User *currentUser = head;
+        while (currentUser != NULL){
+            if(strcmp(newUser->username, currentUser->username) == 0){
+                printf("Username already exists\n\n");
+                free(newUser);
+                return;
+            }
+            currentUser = currentUser->next;
         }
-    } while(checkEmail(newUser->email) == 0);
-
-    printf("Phone Number: "); scanf("%s", newUser->phone);
-    if(checkNumberPhone(newUser->phone) == 0){
-            printf("Re-Enter!!! So dien thoai phai la 10 so\n");
+        newUser->next = head;
+        head = newUser;
+        saveUsertoFile();
+        printf("Register Success!!!\n\n");
     }
-    while(checkNumberPhone(newUser->phone) == 0){
-        printf("Phone Number: "); scanf("%s", newUser->phone);
-        if(checkNumberPhone(newUser->phone) == 0){
-            printf("Re-Enter!!! So dien thoai phai la 10 so\n");
-        }
-    }
-    newUser->status = 1;
-    User *currentUser = head;
-    while (currentUser != NULL){
-        if(strcmp(newUser->username, currentUser->username) == 0){
-            printf("Username already exists\n\n");
-            free(newUser);
-            return;
-        }
-        currentUser = currentUser->next;
-    }
-    newUser->next = head;
-    head = newUser;
-    saveUsertoFile();
-    printf("Register Success!!!\n\n");
-}
 
 User *userLoggin = NULL;
 void signinUser(){
@@ -269,27 +260,29 @@ void chagePassword(){
 }
 
 void updateAccInf(){
+    struct hostent *host;
+    struct in_addr **addr_list;
     if(isLog == 0){
         printf("You need to sign in!\n\n");
         return;
     }
     User *currentUser = head;
-    char newEmail[50];
-    char newSDT[11];
+    char newIp_or_Domain[100];
     while (currentUser != NULL){
         if(strcmp(currentUser->username, userLoggin->username) == 0){
             do{
-                printf("New email: "); scanf("%s", userLoggin->email);
-                if(checkEmail(userLoggin->email) == 0){
-                    printf("Re-Enter!!! Email khong dung format\n");
+            printf("Ip or Domain: "); scanf("%s", userLoggin->ip_or_domain);
+            if (is_valid_ip(userLoggin->ip_or_domain)) { // Check if it's a valid IP
+            printf("This is a valid IP\n");
+            } else {
+                host = gethostbyname(userLoggin->ip_or_domain); // Check if it's a valid domain
+                if (host == NULL) {
+                    printf("No information Domain found\n");
+                } else {
+                printf("This is a valid Domain\n");
                 }
-            } while(checkEmail(userLoggin->email) == 0);
-            do{
-                printf("New phone number: "); scanf("%s", userLoggin->phone);
-                if(checkNumberPhone(userLoggin->phone) == 0){
-                    printf("Re-Enter!!! So dien thoai phai la 10 so\n");
-                }
-            } while(checkNumberPhone(userLoggin->phone) == 0);
+            }
+            } while(is_valid_ip(userLoggin->ip_or_domain) == 0 && host == NULL);
             saveUsertoFile();
             printf("Updated!!!\n\n");
             return;
@@ -309,7 +302,7 @@ void resetPassword(){
     scanf("%s", username);
     int checkUsername = 0;
     User *currentUser = head;
-    while (currentUser != NULL ){
+    while (currentUser != NULL){
         if(strcmp(currentUser->username, username) == 0){
             char otpSended[9];
             checkUsername = 1;
@@ -376,6 +369,29 @@ void viewLoginHistory(char username[]) {
     printf("----------------------------------------------------\n");
 }
 
+void showHomePage_IP(){
+    if(isLog == 0){
+        printf("You must to sign in to use this function\n");
+        return;
+    }
+    if(is_valid_ip(userLoggin->ip_or_domain)){
+        printf("IP: %s\n\n", userLoggin->ip_or_domain);
+    }
+    else lookup_domain_to_ip(userLoggin->ip_or_domain);
+}
+
+void showHomePage_DomainName(){
+    if(isLog == 0){
+        printf("You must to sign in to use this function\n");
+        return;
+    }
+    if(!is_valid_ip(userLoggin->ip_or_domain)){
+        printf("Domain name: %s\n\n", userLoggin->ip_or_domain);
+    }
+    else lookup_ip_to_domain(userLoggin->ip_or_domain);
+}
+
+
 int main(){
     readUserFromAccountFile();
     int choice;
@@ -388,8 +404,10 @@ int main(){
         printf("4. Update account info\n");
         printf("5. Reset password\n");
         printf("6. View login history\n");
-        printf("7. Sign out\n");
-        printf("Your choice (1-7, other to quit):\n");
+        printf("7. Homepage with domain name\n");
+        printf("8. Homepage with IP address\n");
+        printf("9. Log out\n");
+        printf("Your choice (1-9, other to quit):\n");
         if (scanf("%d", &choice) != 1) { // Nếu nhập không phải số nguyên
             // Xử lý buffer khi nhập ký tự không hợp lệ
             while (getchar() != '\n');  // Xóa bộ đệm, chờ tới khi gặp '\n'
@@ -421,11 +439,79 @@ int main(){
             }
             break;
         case 7:
-            logout();
+            showHomePage_DomainName();
             break;
+        case 8:
+            showHomePage_IP();
+            break;
+        case 9:
+            logout();
+            break;    
         default:
             printf("Exiting...\n");
         }
-        
-    } while(choice >= 1 && choice < 8);
+    } while(choice >= 1 && choice < 10);
 }
+
+// int checkNumberPhone(char phone[]){
+//     if (strlen(phone) != 10) {
+//         return 0;
+//     }
+//     for(int i=0; i < strlen(phone); i++){
+//         if(!(phone[i] >= 48 && phone[i] <= 57)){ // SDT phải là số từ 0-9
+//             return 0;
+//         }
+//     }
+//     return 1;
+// }
+
+// int checkEmail(char email[]) {
+//     int atCount = 0;   // Đếm số lượng ký tự '@'
+//     int dotCount = 0;  // Đếm số lượng dấu '.'
+//     int len = strlen(email);
+
+//     // Kiểm tra email không bắt đầu hoặc kết thúc bằng dấu '.' hoặc '@'
+//     if (email[0] == '.' || email[0] == '@' || email[len - 1] == '.' || email[len - 1] == '@') {
+//         return 0;
+//     }
+
+//     for (int i = 0; i < len; i++) {
+//         char c = email[i];
+
+//         // Kiểm tra ký tự hợp lệ (chữ cái, số, dấu chấm, dấu gạch dưới, dấu gạch ngang, hoặc @)
+//         if (!(isalnum(c) || c == '.' || c == '_' || c == '-' || c == '@')) {
+//             return 0;  // Ký tự không hợp lệ
+//         }
+
+//         // Đếm số lượng '@'
+//         if (c == '@') {
+//             atCount++;
+//             if (atCount > 1) {
+//                 return 0;
+//             }
+//         }
+
+//         // Đếm số lượng dấu '.'
+//         if (c == '.') {
+//             dotCount++;
+//             // Kiểm tra không có dấu '.' liên tiếp
+//             if (i > 0 && email[i - 1] == '.') {
+//                 return 0;  // Dấu '.' không được liên tiếp
+//             }
+//         }
+//     }
+
+//     // Kiểm tra có ít nhất một '@' và một '.' sau '@' và không chứa các kí tự đặc biệt khác
+//     char *atPtr = strchr(email, '@');
+//     if (atPtr == NULL || strchr(atPtr, '.') == NULL || strchr(atPtr, '+') != NULL || strchr(atPtr, '-') != NULL || strchr(atPtr, '(') != NULL || strchr(atPtr, ')') != NULL || strchr(atPtr, '*') != NULL || strchr(atPtr, '/') != NULL) {
+//         return 0;
+//     }
+
+//     // Kiểm tra nếu có ít nhất một ký tự hợp lệ giữa '@' và '.'
+//     char *dotPtr = strchr(atPtr, '.');
+//     if (dotPtr - atPtr < 2) {
+//         return 0;  // Không hợp lệ nếu không có ký tự nào giữa '@' và '.'
+//     }
+
+//     return 1;  // Email hợp lệ
+// }
