@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <ctype.h>
 #include <string.h>
 #include <arpa/inet.h>
 #include <netdb.h>
@@ -39,6 +40,16 @@ void print_alternate_ips(struct in_addr **addr_list) {
     }
 }
 
+// Hàm kiểm tra ký tự tên miền hợp lệ
+int is_valid_domain(char *domain) {
+    for (int i = 0; domain[i] != '\0'; i++) {
+        if (!(isalnum(domain[i]) || domain[i] == '-' || domain[i] == '.')) {
+            return 0;  // Invalid character found
+        }
+    }
+    return 1;  // Valid domain
+}
+
 // Tra cứu tên miền từ địa chỉ IP
 void lookup_ip_to_domain(char *ip) {
     struct hostent *host;
@@ -67,12 +78,16 @@ void lookup_ip_to_domain(char *ip) {
 void lookup_domain_to_ip(char *domain) {
     struct hostent *host;
     struct in_addr **addr_list;
-
+    
+    // Kiểm tra ký tự hợp lệ của domain
+    if (!is_valid_domain(domain)) {
+        printf("Invalid domain\n");
+        return;
+    }
     if (is_valid_ip(domain)) {
         printf("Invalid option\n");
         return;
     }
-    
     host = gethostbyname(domain);
     if (host == NULL) {
         printf("No information found\n");
@@ -96,7 +111,28 @@ void handle_lookup_option(int option, char *parameter) {
     }
 }
 
-// Kiểm tra và xử lý tham số đầu vào
+
+void trim_spaces(char *str) {
+    char *end;
+    
+    // Trim leading spaces
+    while(isspace((unsigned char)*str)) str++;
+    
+    // Trim trailing spaces
+    if (*str == 0) return; // All spaces
+
+    end = str + strlen(str) - 1;
+    while(end > str && isspace((unsigned char)*end)) end--;
+
+    // Null terminate the string after trimming
+    *(end + 1) = 0;
+}
+int has_leading_dot(char *str) {
+    if (str[0] == '.') {
+        return 1;
+    }
+    return 0;
+}
 void validate_and_execute(int argc, char *argv[]) {
     if (argc != 3) {
         printf("Usage: ./lookup option parameter\n");
@@ -106,6 +142,16 @@ void validate_and_execute(int argc, char *argv[]) {
     int option = atoi(argv[1]);
     char *parameter = argv[2];
     
+    // Loại bỏ dấu cách thừa
+    trim_spaces(parameter);
+    
+    // Kiểm tra dấu chấm ở đầu
+    if (has_leading_dot(parameter)) {
+        printf("Invalid input: Leading dot is not allowed.\n");
+        exit(1);
+    }
+
+    // Thực hiện tra cứu
     handle_lookup_option(option, parameter);
 }
 
