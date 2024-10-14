@@ -7,7 +7,6 @@
 
 #define BUFFER_SIZE 1024
 #define ACCOUNT_FILE "nguoidung.txt"
-#define MAX_ATTEMPTS 3
 
 typedef struct User {
     char username[50];
@@ -72,7 +71,7 @@ User* authenticate(char* username, char* password) {
                 return current;
             } else {
                 current->attempts++;
-                if (current->attempts >= MAX_ATTEMPTS) {
+                if (current->attempts >= 3) {
                     current->status = 0; // Block account
                     saveUsertoFile();
                 }
