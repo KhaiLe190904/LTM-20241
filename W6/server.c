@@ -4,6 +4,7 @@
 #include <arpa/inet.h>
 #include <unistd.h>
 #include <ctype.h>
+#include <sys/wait.h>
 
 #define BUFFER_SIZE 1024
 #define ACCOUNT_FILE "account.txt"
@@ -101,6 +102,13 @@ void encryptPassword(char* password, char* letters, char* digits) {
     }
     letters[l_idx] = '\0';
     digits[d_idx] = '\0';
+}
+
+void sig_chld(int signo){
+    pid_t pid;
+    int stat;
+    pid = waitpid(-1, &stat, WNOHANG);
+    printf("Child %d terminated\n", pid);
 }
 
 void handleClient(int new_sockfd) {
@@ -210,6 +218,7 @@ int main(int argc, char *argv[]) {
         return 0;
     }
 
+    signal(SIGCHLD, sig_chld);
     readUserFromAccountFile();
     printf("Server is running on port %d...\n", port);
 
