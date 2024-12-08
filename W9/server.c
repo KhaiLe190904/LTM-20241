@@ -4,7 +4,7 @@
 #include <arpa/inet.h>
 #include <unistd.h>
 #include <ctype.h>
-#include <sys/select.h>
+#include <poll.h>
 
 #define BUFFER_SIZE 1024
 #define MAX_CLIENTS 10
@@ -46,17 +46,17 @@ void readUserFromAccountFile() {
 
 void saveUsertoFile() {
     FILE *file = fopen(ACCOUNT_FILE, "w");
-    if(file == NULL){
+    if (file == NULL) {
         printf("File doesn't exist!!!\n");
         exit(1);
     }
     User *current = head;
-    while(current != NULL){
+    while (current != NULL) {
         fprintf(file, "%s %s %d %s\n",
-        current->username,
-        current->password,
-        current->status,
-        current->ip_or_domain);
+            current->username,
+            current->password,
+            current->status,
+            current->ip_or_domain);
         current = current->next;
     }
     fclose(file);
@@ -105,13 +105,13 @@ void encryptPassword(char* password, char* letters, char* digits) {
     digits[d_idx] = '\0';
 }
 
-void notifyClientsOfPasswordChange(char* username, char* newPassword, int* client_sockets, int max_sd) {
+void notifyClientsOfPasswordChange(char* username, char* newPassword, struct pollfd* ufds, int client_count) {
     char buffer[BUFFER_SIZE];
     snprintf(buffer, sizeof(buffer), "Password for %s has been updated to %s", username, newPassword);
     
-    for (int i = 0; i < MAX_CLIENTS; i++) {
-        if (client_sockets[i] > 0) {
-            send(client_sockets[i], buffer, strlen(buffer), 0);
+    for (int i = 1; i <= client_count; i++) { // Bắt đầu từ 1 vì 0 là listening socket
+        if (ufds[i].fd > 0) {
+            send(ufds[i].fd, buffer, strlen(buffer), 0);
         }
     }
 }
@@ -123,13 +123,14 @@ int main(int argc, char* argv[]) {
     }
 
     int port = atoi(argv[1]);
-    int listening_socket, max_sd, new_socket, client_sockets[MAX_CLIENTS] = {0};
-    int activity, valread;
+    int listening_socket, new_socket, client_count = 0;
     struct sockaddr_in server_addr, client_addr;
     socklen_t addr_len = sizeof(client_addr);
-    fd_set readfds;
 
     char buffer[BUFFER_SIZE];
+    struct pollfd ufds[MAX_CLIENTS + 1]; // +1 cho listening_socket
+
+    memset(ufds, 0, sizeof(ufds));
 
     // Tạo socket lắng nghe
     if ((listening_socket = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
@@ -156,118 +157,116 @@ int main(int argc, char* argv[]) {
     readUserFromAccountFile();
     printf("Server is running on port %d...\n", port);
 
+    // Thiết lập ufds cho listening_socket
+    ufds[0].fd = listening_socket;
+    ufds[0].events = POLLIN;
+
     while (1) {
-        // Xóa và thiết lập tập hợp file descriptor
-        FD_ZERO(&readfds);
-        FD_SET(listening_socket, &readfds);
-        max_sd = listening_socket;
-
-        for (int i = 0; i < MAX_CLIENTS; i++) {
-            if (client_sockets[i] > 0) {
-                FD_SET(client_sockets[i], &readfds);
-            }
-            if (client_sockets[i] > max_sd) {
-                max_sd = client_sockets[i];
-            }
-        }
-
-        // Chờ hoạt động từ bất kỳ socket nào
-        activity = select(max_sd + 1, &readfds, NULL, NULL, NULL);
+        int activity = poll(ufds, client_count + 1, -1);
 
         if (activity < 0) {
-            perror("Select error");
+            perror("Poll error");
             continue;
         }
 
-        // Xử lý kết nối mới
-        if (FD_ISSET(listening_socket, &readfds)) {
+        // Kiểm tra kết nối mới
+        if (ufds[0].revents & POLLIN) {
             new_socket = accept(listening_socket, (struct sockaddr*)&client_addr, &addr_len);
             if (new_socket < 0) {
                 perror("Accept failed");
                 continue;
             }
+
             printf("New connection established: socket %d\n", new_socket);
 
-            for (int i = 0; i < MAX_CLIENTS; i++) {
-                if (client_sockets[i] == 0) {
-                    client_sockets[i] = new_socket;
-                    break;
-                }
+            // Thêm socket mới vào danh sách ufds
+            if (client_count < MAX_CLIENTS) {
+                client_count++;
+                ufds[client_count].fd = new_socket;
+                ufds[client_count].events = POLLIN;
+            } else {
+                printf("Maximum clients reached. Connection rejected.\n");
+                close(new_socket);
             }
         }
 
         // Kiểm tra hoạt động từ các client
-        for (int i = 0; i < MAX_CLIENTS; i++) {
-            int sd = client_sockets[i];
-
-            if (FD_ISSET(sd, &readfds)) {
+        for (int i = 1; i <= client_count; i++) {
+            if (ufds[i].revents & POLLIN) {
                 memset(buffer, 0, BUFFER_SIZE);
-                valread = read(sd, buffer, BUFFER_SIZE);
+                int valread = recv(ufds[i].fd, buffer, BUFFER_SIZE, 0);
 
                 if (valread == 0) {
                     // Client ngắt kết nối
-                    printf("Client on socket %d disconnected\n", sd);
-                    close(sd);
-                    client_sockets[i] = 0;
+                    printf("Client on socket %d disconnected\n", ufds[i].fd);
+                    close(ufds[i].fd);
+
+                    // Loại bỏ socket khỏi danh sách ufds
+                    for (int j = i; j < client_count; j++) {
+                        ufds[j] = ufds[j + 1];
+                    }
+                    client_count--;
+                    i--;
                 } else {
                     // Xử lý yêu cầu từ client
                     buffer[valread] = '\0';
-                    printf("Received from socket %d: %s\n", sd, buffer);
+                    printf("Received from socket %d: %s\n", ufds[i].fd, buffer);
 
                     char username[50], password[50];
                     sscanf(buffer, "%s %s", username, password);
 
                     User* user = authenticate(username, password);
                     if (user == NULL) {
-                        send(sd, "not OK", strlen("not OK"), 0);
+                        send(ufds[i].fd, "not OK", strlen("not OK"), 0);
                     } else {
                         if (user->status == 1) {
-                            send(sd, "OK", strlen("OK"), 0);
+                            send(ufds[i].fd, "OK", strlen("OK"), 0);
 
                             while (1) {
                                 memset(buffer, 0, BUFFER_SIZE);
-                                recv(sd, buffer, BUFFER_SIZE, 0);
+                                recv(ufds[i].fd, buffer, BUFFER_SIZE, 0);
 
                                 // Kiểm tra nếu client yêu cầu signout
                                 if (strcmp(buffer, "bye") == 0) {
                                     printf("User %s signed out.\n", username);
-                                    send(sd, "Signed out", strlen("Signed out"), 0);
+                                    send(ufds[i].fd, "Signed out", strlen("Signed out"), 0);
                                     break;
                                 } 
                                 // Kiểm tra nếu client yêu cầu hiển thị homepage
                                 else if (strcmp(buffer, "homepage") == 0) {
                                     printf("User %s requested homepage.\n", username);
-                                    send(sd, user->ip_or_domain, strlen(user->ip_or_domain), 0);
+                                    send(ufds[i].fd, user->ip_or_domain, strlen(user->ip_or_domain), 0);
                                 } 
                                 // Yêu cầu đổi mật khẩu
                                 else {
-                            printf("User %s requested password change.\n", username);
+                                    printf("User %s requested password change.\n", username);
 
-                            // Kiểm tra tính hợp lệ của mật khẩu
-                            if (!isValidPassword(buffer)) {
-                                send(sd, "Invalid password", strlen("Invalid password"), 0);
-                            } else {
-                                    char letters[BUFFER_SIZE] = {0}, digits[BUFFER_SIZE] = {0};
-                                    encryptPassword(buffer, letters, digits);
+                                    // Kiểm tra tính hợp lệ của mật khẩu
+                                    if (!isValidPassword(buffer)) {
+                                        send(ufds[i].fd, "Invalid password", strlen("Invalid password"), 0);
+                                    } else {
+                                        char letters[BUFFER_SIZE] = {0}, digits[BUFFER_SIZE] = {0};
+                                        encryptPassword(buffer, letters, digits);
 
-                                    // Gửi phản hồi cho client với thông báo
-                                    snprintf(buffer, BUFFER_SIZE, "New password: Letters: %s, Digits: %s", letters, digits);
-                                    send(sd, buffer, strlen(buffer), 0);
+                                        // Gửi phản hồi cho client với thông báo
+                                        snprintf(buffer, BUFFER_SIZE, "New password: Letters: %s, Digits: %s", letters, digits);
+                                        send(ufds[i].fd, buffer, strlen(buffer), 0);
 
-                                    // Ghép mật khẩu lại thành chuỗi đầy đủ: "letters + digits"
-                                    char new_password[BUFFER_SIZE] = {0};
-                                    snprintf(new_password, BUFFER_SIZE, "%s%s", letters, digits);
+                                        // Ghép mật khẩu lại thành chuỗi đầy đủ: "letters + digits"
+                                        char new_password[BUFFER_SIZE];
+                                        snprintf(new_password, sizeof(new_password), "%s%s", letters, digits);
+                                        strcpy(user->password, new_password);
 
-                                    // Cập nhật mật khẩu mới cho user
-                                    strcpy(user->password, new_password);
-                                    saveUsertoFile();  // Lưu thông tin vào file sau khi cập nhật
-                                    printf("Password for user %s has been updated to %s.\n", username, new_password);
-                                    notifyClientsOfPasswordChange(username, buffer, client_sockets, max_sd);
+                                        // Cập nhật mật khẩu vào file
+                                        saveUsertoFile();
+
+                                        // Thông báo tới tất cả các client
+                                        notifyClientsOfPasswordChange(username, new_password, ufds, client_count);
                                     }
                                 }
                             }
                         } else {
-                            send(sd, "Account is blocked", strlen("Account is blocked"), 0);
+                            send(ufds[i].fd, "Account is blocked", strlen("Account is blocked"), 0);
                         }
                     }
                 }
